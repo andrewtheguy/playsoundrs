@@ -12,3 +12,10 @@ image = "0.25"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
+
+[package.metadata.bundle]
+name = "PlaySoundRust"
+identifier = "com.playsound.playsoundrust"
+version = "0.1.0"
+category = "public.app-category.utilities"
+short_description = "A Rust sound player application"

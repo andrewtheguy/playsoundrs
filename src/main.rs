@@ -70,10 +70,6 @@ impl AudioState {
             println!("Stopped {}Hz tone", FREQUENCY_HZ as i32);
         }
     }
-
-    fn is_playing(&self) -> bool {
-        self.is_playing
-    }
 }
 
 fn create_icon_with_color(r: u8, g: u8, b: u8) -> tray_icon::Icon {

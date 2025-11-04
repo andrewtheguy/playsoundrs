@@ -7,6 +7,9 @@ use tray_icon::{
 };
 use image::{Rgba, RgbaImage};
 
+// Constant for the tone frequency in Hz
+const FREQUENCY_HZ: f32 = 40.0;
+
 struct AudioState {
     sink: Option<Sink>,
     _stream: Option<OutputStream>,
@@ -37,7 +40,7 @@ impl AudioState {
             if sink.is_paused() {
                 sink.play();
                 self.is_playing = true;
-                println!("Resumed 200Hz tone");
+                println!("Resumed {}Hz tone", FREQUENCY_HZ as i32);
                 return Ok(());
             }
         }
@@ -45,8 +48,8 @@ impl AudioState {
         if let Some(stream) = &self._stream {
             let sink = Sink::connect_new(stream.mixer());
 
-            let source = SineWave::new(200.0)
-                .amplify(0.20)
+            let source = SineWave::new(FREQUENCY_HZ)
+                .amplify(0.5)
                 .repeat_infinite();
 
             sink.append(source);
@@ -54,7 +57,7 @@ impl AudioState {
 
             self.sink = Some(sink);
             self.is_playing = true;
-            println!("Started playing 200Hz tone");
+            println!("Started playing {}Hz tone", FREQUENCY_HZ as i32);
         }
 
         Ok(())
@@ -64,7 +67,7 @@ impl AudioState {
         if let Some(sink) = &self.sink {
             sink.pause();
             self.is_playing = false;
-            println!("Stopped 200Hz tone");
+            println!("Stopped {}Hz tone", FREQUENCY_HZ as i32);
         }
     }
 
@@ -73,7 +76,7 @@ impl AudioState {
     }
 }
 
-fn create_icon() -> tray_icon::Icon {
+fn create_icon_with_color(r: u8, g: u8, b: u8) -> tray_icon::Icon {
     let size = 32u32;
     let mut img = RgbaImage::new(size, size);
 
@@ -87,7 +90,7 @@ fn create_icon() -> tray_icon::Icon {
             let distance = ((dx * dx + dy * dy) as f32).sqrt();
 
             if distance <= radius as f32 {
-                img.put_pixel(x, y, Rgba([100, 149, 237, 255]));
+                img.put_pixel(x, y, Rgba([r, g, b, 255]));
             } else {
                 img.put_pixel(x, y, Rgba([0, 0, 0, 0]));
             }
@@ -99,6 +102,16 @@ fn create_icon() -> tray_icon::Icon {
 
     tray_icon::Icon::from_rgba(rgba, width, height)
         .expect("Failed to create icon")
+}
+
+fn create_stopped_icon() -> tray_icon::Icon {
+    // Blue circle for stopped state
+    create_icon_with_color(100, 149, 237)
+}
+
+fn create_playing_icon() -> tray_icon::Icon {
+    // Green circle for playing state
+    create_icon_with_color(76, 175, 80)
 }
 
 #[cfg(target_os = "macos")]
@@ -129,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio_state = Arc::new(Mutex::new(AudioState::new()));
 
     let menu = Menu::new();
-    let play_item = CheckMenuItem::new("Play 200Hz Tone", true, false, None);
+    let play_item = CheckMenuItem::new(&format!("Play {}Hz Tone", FREQUENCY_HZ as i32), true, false, None);
     let stop_item = MenuItem::new("Stop", true, None);
     let quit_item = MenuItem::new("Quit", true, None);
 
@@ -140,17 +153,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     menu.append(&stop_item)?;
     menu.append(&quit_item)?;
 
-    let icon = create_icon();
+    let icon = create_stopped_icon();
 
     // Now it's safe to create the tray icon after NSApplication is initialized
-    let _tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip("Audio Player - 200Hz Tone")
+        .with_tooltip(&format!("Audio Player - {}Hz Tone", FREQUENCY_HZ as i32))
         .with_icon(icon)
         .build()?;
 
     println!("Tray icon created. Look for it in your menu bar!");
-    println!("Use the menu to Play or Stop the 200Hz tone.");
+    println!("Use the menu to Play or Stop the {}Hz tone.", FREQUENCY_HZ as i32);
 
     let menu_channel = MenuEvent::receiver();
 
@@ -195,6 +208,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         play_item.set_enabled(false);
                         play_item.set_checked(true);
                         stop_item.set_enabled(true);
+                        // Change tray icon to green (playing)
+                        tray.set_icon(Some(create_playing_icon())).ok();
                     }
                 } else if event_id == stop_item.id() {
                     let mut state = audio_state.lock().unwrap();
@@ -203,6 +218,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     play_item.set_enabled(true);
                     play_item.set_checked(false);
                     stop_item.set_enabled(false);
+                    // Change tray icon to blue (stopped)
+                    tray.set_icon(Some(create_stopped_icon())).ok();
                 } else if event_id == quit_item.id() {
                     println!("Quitting application...");
                     break;
@@ -228,6 +245,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         play_item.set_enabled(false);
                         play_item.set_checked(true);
                         stop_item.set_enabled(true);
+                        // Change tray icon to green (playing)
+                        tray.set_icon(Some(create_playing_icon())).ok();
                     }
                 } else if event_id == stop_item.id() {
                     let mut state = audio_state.lock().unwrap();
@@ -236,6 +255,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     play_item.set_enabled(true);
                     play_item.set_checked(false);
                     stop_item.set_enabled(false);
+                    // Change tray icon to blue (stopped)
+                    tray.set_icon(Some(create_stopped_icon())).ok();
                 } else if event_id == quit_item.id() {
                     println!("Quitting application...");
                     break;

@@ -3,13 +3,14 @@ use rodio::source::SineWave;
 use std::sync::{Arc, Mutex};
 use tray_icon::{
     TrayIconBuilder,
-    menu::{Menu, MenuItem, MenuEvent},
+    menu::{Menu, MenuItem, CheckMenuItem, MenuEvent},
 };
 use image::{Rgba, RgbaImage};
 
 struct AudioState {
     sink: Option<Sink>,
     _stream: Option<OutputStream>,
+    is_playing: bool,
 }
 
 impl AudioState {
@@ -17,6 +18,7 @@ impl AudioState {
         AudioState {
             sink: None,
             _stream: None,
+            is_playing: false,
         }
     }
 
@@ -34,6 +36,7 @@ impl AudioState {
         if let Some(sink) = &self.sink {
             if sink.is_paused() {
                 sink.play();
+                self.is_playing = true;
                 println!("Resumed 200Hz tone");
                 return Ok(());
             }
@@ -50,6 +53,7 @@ impl AudioState {
             sink.play();
 
             self.sink = Some(sink);
+            self.is_playing = true;
             println!("Started playing 200Hz tone");
         }
 
@@ -59,8 +63,13 @@ impl AudioState {
     fn stop(&mut self) {
         if let Some(sink) = &self.sink {
             sink.pause();
+            self.is_playing = false;
             println!("Stopped 200Hz tone");
         }
+    }
+
+    fn is_playing(&self) -> bool {
+        self.is_playing
     }
 }
 
@@ -119,9 +128,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio_state = Arc::new(Mutex::new(AudioState::new()));
 
     let menu = Menu::new();
-    let play_item = MenuItem::new("Play 200Hz Tone", true, None);
+    let play_item = CheckMenuItem::new("Play 200Hz Tone", true, false, None);
     let stop_item = MenuItem::new("Stop", true, None);
     let quit_item = MenuItem::new("Quit", true, None);
+
+    // Initially, disable "Stop" since we're not playing
+    stop_item.set_enabled(false);
 
     menu.append(&play_item)?;
     menu.append(&stop_item)?;
@@ -177,10 +189,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut state = audio_state.lock().unwrap();
                     if let Err(e) = state.play() {
                         eprintln!("Error playing audio: {}", e);
+                    } else {
+                        // Update menu items: disable Play, enable Stop, show checkmark
+                        play_item.set_enabled(false);
+                        play_item.set_checked(true);
+                        stop_item.set_enabled(true);
                     }
                 } else if event_id == stop_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.stop();
+                    // Update menu items: enable Play, disable Stop, remove checkmark
+                    play_item.set_enabled(true);
+                    play_item.set_checked(false);
+                    stop_item.set_enabled(false);
                 } else if event_id == quit_item.id() {
                     println!("Quitting application...");
                     break;
@@ -201,10 +222,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut state = audio_state.lock().unwrap();
                     if let Err(e) = state.play() {
                         eprintln!("Error playing audio: {}", e);
+                    } else {
+                        // Update menu items: disable Play, enable Stop, show checkmark
+                        play_item.set_enabled(false);
+                        play_item.set_checked(true);
+                        stop_item.set_enabled(true);
                     }
                 } else if event_id == stop_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.stop();
+                    // Update menu items: enable Play, disable Stop, remove checkmark
+                    play_item.set_enabled(true);
+                    play_item.set_checked(false);
+                    stop_item.set_enabled(false);
                 } else if event_id == quit_item.id() {
                     println!("Quitting application...");
                     break;

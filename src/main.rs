@@ -101,6 +101,12 @@ fn create_icon() -> tray_icon::Icon {
         .expect("Failed to create icon")
 }
 
+#[cfg(target_os = "macos")]
+fn default_run_loop_mode() -> &'static objc2_foundation::NSRunLoopMode {
+    // SAFETY: `NSDefaultRunLoopMode` is provided by AppKit and lives for the duration of the process.
+    unsafe { objc2_foundation::NSDefaultRunLoopMode }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting macOS Audio Tray App...");
 
@@ -114,15 +120,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Must run on the main thread for macOS GUI");
         let app = NSApplication::sharedApplication(mtm);
 
-        // Set activation policy to accessory so app doesn't show in Dock
-        unsafe {
-            app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-        }
-
-        // This is CRITICAL - finish launching the app before creating tray icons
-        unsafe {
-            app.finishLaunching();
-        }
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    
+        app.finishLaunching();
+      
     }
 
     let audio_state = Arc::new(Mutex::new(AudioState::new()));
@@ -166,20 +167,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Process events in a loop
         loop {
             // Process pending macOS events
-            unsafe {
-                use objc2_app_kit::NSEventMask;
-                use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
+            
+            use objc2_app_kit::NSEventMask;
+            use objc2_foundation::NSDate;
 
-                // Process all pending events
-                while let Some(event) = app.nextEventMatchingMask_untilDate_inMode_dequeue(
-                    NSEventMask::Any,
+            // Process all pending events
+            while let Some(event) = app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                NSEventMask::Any,
                     Some(&NSDate::distantPast()),
-                    NSDefaultRunLoopMode,
-                    true,
-                ) {
-                    app.sendEvent(&event);
-                }
+                    default_run_loop_mode(),
+                true,
+            ) {
+                app.sendEvent(&event);
             }
+            
 
             // Check for menu events
             if let Ok(event) = menu_channel.try_recv() {

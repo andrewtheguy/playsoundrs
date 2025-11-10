@@ -8,6 +8,7 @@ A macOS menu bar application that plays audio for relaxation and focus. Built wi
   - 40Hz sine wave tone
   - White noise
   - Pink noise
+  - Brown noise
 - **Volume Control**
   - Four preset levels: Low (25%), Medium (50%), High (75%), Max (100%)
   - Adjustable before playback
@@ -104,6 +105,7 @@ zip -r PlaySoundRust.zip PlaySoundRust.app
    - 40Hz Tone (sine wave)
    - White Noise
    - Pink Noise
+   - Brown Noise
 4. **Volume** - Choose your preferred volume level from the submenu:
    - Low (25%)
    - Medium (50%) - default
@@ -140,6 +142,13 @@ Random noise with more emphasis on lower frequencies (1/f noise). Compared to wh
 - Often preferred for sleep
 - Similar to the sound of rain or wind
 
+### Brown Noise
+Random noise with emphasis on even lower frequencies (1/f² noise). Compared to pink noise:
+- Smoother and deeper sound
+- Often described as similar to a rolling thunder or deep ocean waves
+- Excellent for deep focus and meditation
+- Created using a two-stage leaky integrator algorithm for authentic 1/f² spectrum
+
 ## Configuration
 
 To change the sine wave frequency, modify the `FREQUENCY_HZ` constant in `src/main.rs`:
@@ -157,6 +166,7 @@ The default volume levels can be adjusted by modifying the volume multipliers in
 **New Features:**
 - Added white noise generator
 - Added pink noise generator (using Paul Kellett's algorithm)
+- Added brown noise generator (using two-stage leaky integrator)
 - Added volume control with 4 preset levels (25%, 50%, 75%, 100%)
 - Added sound selection submenu
 - Implemented UI locking during playback (prevents sound/volume changes while playing)

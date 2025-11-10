@@ -132,17 +132,20 @@ impl Source for PinkNoise {
     }
 }
 
-// Brown noise generator using random walk (integration of white noise)
+// Brown noise generator using 1/f² spectrum (leaky integrator)
+// This produces a smoother, more natural brown noise than simple random walk
 struct BrownNoise {
     white_noise: WhiteNoise,
-    last_value: f32,
+    integrator1: f32,
+    integrator2: f32,
 }
 
 impl BrownNoise {
     fn new() -> Self {
         BrownNoise {
             white_noise: WhiteNoise::new(),
-            last_value: 0.0,
+            integrator1: 0.0,
+            integrator2: 0.0,
         }
     }
 }
@@ -152,14 +155,15 @@ impl Iterator for BrownNoise {
 
     fn next(&mut self) -> Option<Self::Item> {
         let white = self.white_noise.next()?;
-
-        // Add a small random step to the current value
-        self.last_value += white * 0.02;
-
-        // Clamp to prevent drift out of bounds
-        self.last_value = self.last_value.clamp(-1.0, 1.0);
-
-        Some(self.last_value)
+        
+        // Two-stage leaky integrator to create 1/f² spectrum
+        // First integrator with time constant ~0.97
+        self.integrator1 = 0.97 * self.integrator1 + 0.03 * white;
+        // Second integrator with time constant ~0.94
+        self.integrator2 = 0.94 * self.integrator2 + 0.06 * white;
+        
+        // Combine the two integrators and scale to reasonable volume
+        Some((self.integrator1 + self.integrator2) * 0.5)
     }
 }
 

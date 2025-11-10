@@ -1,16 +1,171 @@
 use rodio::{OutputStream, OutputStreamBuilder, Sink, Source};
 use rodio::source::SineWave;
 use std::sync::{Arc, Mutex};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use tray_icon::{
     TrayIconBuilder,
     menu::{Menu, MenuItem, CheckMenuItem, Submenu, MenuEvent},
 };
 use image::{Rgba, RgbaImage};
-use rand::{Rng, SeedableRng};
-use rand::rngs::StdRng;
 
 // Constant for the tone frequency in Hz
 const FREQUENCY_HZ: f32 = 40.0;
+const SAMPLE_RATE: u32 = 44_100;
+const PINK_NOISE_ROWS: usize = 16;
+
+struct WhiteNoise {
+    rng: StdRng,
+}
+
+impl WhiteNoise {
+    fn new() -> Self {
+        Self { rng: StdRng::from_entropy() }
+    }
+}
+
+impl Iterator for WhiteNoise {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.rng.gen_range(-1.0..=1.0))
+    }
+}
+
+impl Source for WhiteNoise {
+    #[inline]
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    #[inline]
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        SAMPLE_RATE
+    }
+
+    #[inline]
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+struct PinkNoise {
+    rng: StdRng,
+    rows: [f32; PINK_NOISE_ROWS],
+    running_sum: f32,
+    counter: u32,
+}
+
+impl PinkNoise {
+    fn new() -> Self {
+        let mut rng = StdRng::from_entropy();
+        let mut rows = [0.0; PINK_NOISE_ROWS];
+        let mut running_sum = 0.0;
+        for row in rows.iter_mut() {
+            *row = rng.gen_range(-1.0..=1.0);
+            running_sum += *row;
+        }
+
+        Self {
+            rows,
+            running_sum,
+            counter: 0,
+            rng,
+        }
+    }
+}
+
+impl Iterator for PinkNoise {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.counter = self.counter.wrapping_add(1);
+        let zeros = self.counter.trailing_zeros() as usize;
+
+        if zeros < PINK_NOISE_ROWS {
+            self.running_sum -= self.rows[zeros];
+            self.rows[zeros] = self.rng.gen_range(-1.0..=1.0);
+            self.running_sum += self.rows[zeros];
+        }
+
+        let white = self.rng.gen_range(-1.0..=1.0);
+        let sample = (self.running_sum + white) / (PINK_NOISE_ROWS as f32 + 1.0);
+
+        Some(sample)
+    }
+}
+
+impl Source for PinkNoise {
+    #[inline]
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    #[inline]
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        SAMPLE_RATE
+    }
+
+    #[inline]
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+struct BrownNoise {
+    rng: StdRng,
+    integrator: f32,
+    output: f32,
+}
+
+impl BrownNoise {
+    fn new() -> Self {
+        Self {
+            rng: StdRng::from_entropy(),
+            integrator: 0.0,
+            output: 0.0,
+        }
+    }
+}
+
+impl Iterator for BrownNoise {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+    }
+}
+
+impl Source for BrownNoise {
+    #[inline]
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    #[inline]
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        SAMPLE_RATE
+    }
+
+    #[inline]
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum SoundType {
@@ -28,152 +183,6 @@ struct AudioState {
     volume: f32,
 }
 
-// White noise generator
-struct WhiteNoise {
-    rng: StdRng,
-}
-
-impl WhiteNoise {
-    fn new() -> Self {
-        WhiteNoise {
-            rng: StdRng::from_entropy(),
-        }
-    }
-}
-
-impl Iterator for WhiteNoise {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(self.rng.gen_range(-1.0..1.0))
-    }
-}
-
-impl Source for WhiteNoise {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> u16 {
-        1
-    }
-
-    fn sample_rate(&self) -> u32 {
-        48000
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        None
-    }
-}
-
-// Pink noise generator using Paul Kellett's algorithm
-struct PinkNoise {
-    white_noise: WhiteNoise,
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    b3: f32,
-    b4: f32,
-    b5: f32,
-    b6: f32,
-}
-
-impl PinkNoise {
-    fn new() -> Self {
-        PinkNoise {
-            white_noise: WhiteNoise::new(),
-            b0: 0.0,
-            b1: 0.0,
-            b2: 0.0,
-            b3: 0.0,
-            b4: 0.0,
-            b5: 0.0,
-            b6: 0.0,
-        }
-    }
-}
-
-impl Iterator for PinkNoise {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let white = self.white_noise.next()?;
-
-        self.b0 = 0.99886 * self.b0 + white * 0.0555179;
-        self.b1 = 0.99332 * self.b1 + white * 0.0750759;
-        self.b2 = 0.96900 * self.b2 + white * 0.1538520;
-        self.b3 = 0.86650 * self.b3 + white * 0.3104856;
-        self.b4 = 0.55000 * self.b4 + white * 0.5329522;
-        self.b5 = -0.7616 * self.b5 - white * 0.0168980;
-
-        let pink = self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362;
-        self.b6 = white * 0.115926;
-
-        Some(pink * 0.11) // Scale down to reasonable volume
-    }
-}
-
-impl Source for PinkNoise {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> u16 {
-        1
-    }
-
-    fn sample_rate(&self) -> u32 {
-        48000
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        None
-    }
-}
-
-// Brown noise generator via cumulative sum (Brownian motion)
-struct BrownNoise {
-    white_noise: WhiteNoise,
-    last_output: f32,
-}
-
-impl BrownNoise {
-    fn new() -> Self {
-        BrownNoise {
-            white_noise: WhiteNoise::new(),
-            last_output: 0.0,
-        }
-    }
-}
-
-impl Iterator for BrownNoise {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let white = self.white_noise.next()?;
-        self.last_output = (self.last_output + white * 0.02) * 0.98;
-        Some(self.last_output * 3.5)
-    }
-}
-
-impl Source for BrownNoise {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> u16 {
-        1
-    }
-
-    fn sample_rate(&self) -> u32 {
-        48000
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        None
-    }
-}
 
 impl AudioState {
     fn new() -> Self {

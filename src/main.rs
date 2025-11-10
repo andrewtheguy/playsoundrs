@@ -125,6 +125,8 @@ struct BrownNoise {
     rng: StdRng,
     integrator: f32,
     output: f32,
+    prev_y1: f32,
+    y2: f32,
 }
 
 impl BrownNoise {
@@ -133,6 +135,8 @@ impl BrownNoise {
             rng: StdRng::from_entropy(),
             integrator: 0.0,
             output: 0.0,
+            prev_y1: 0.0,
+            y2: 0.0,
         }
     }
 }
@@ -141,7 +145,12 @@ impl Iterator for BrownNoise {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-
+        let white = self.rng.gen_range(-1.0..=1.0);
+        // Integrate white noise to create brown noise
+        self.integrator += white * 0.02; // Small step for integration
+        self.integrator *= 0.995; // Damping to prevent drift
+        self.output = self.integrator;
+        Some(self.output)
     }
 }
 

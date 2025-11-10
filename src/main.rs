@@ -3,17 +3,132 @@ use rodio::source::SineWave;
 use std::sync::{Arc, Mutex};
 use tray_icon::{
     TrayIconBuilder,
-    menu::{Menu, MenuItem, CheckMenuItem, MenuEvent},
+    menu::{Menu, MenuItem, CheckMenuItem, Submenu, MenuEvent},
 };
 use image::{Rgba, RgbaImage};
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 
 // Constant for the tone frequency in Hz
 const FREQUENCY_HZ: f32 = 40.0;
+
+#[derive(Clone, Copy, PartialEq)]
+enum SoundType {
+    SineWave,
+    WhiteNoise,
+    PinkNoise,
+}
 
 struct AudioState {
     sink: Option<Sink>,
     _stream: Option<OutputStream>,
     is_playing: bool,
+    sound_type: SoundType,
+    volume: f32,
+}
+
+// White noise generator
+struct WhiteNoise {
+    rng: StdRng,
+}
+
+impl WhiteNoise {
+    fn new() -> Self {
+        WhiteNoise {
+            rng: StdRng::from_entropy(),
+        }
+    }
+}
+
+impl Iterator for WhiteNoise {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.rng.gen_range(-1.0..1.0))
+    }
+}
+
+impl Source for WhiteNoise {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    fn sample_rate(&self) -> u32 {
+        48000
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+// Pink noise generator using Paul Kellett's algorithm
+struct PinkNoise {
+    white_noise: WhiteNoise,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    b3: f32,
+    b4: f32,
+    b5: f32,
+    b6: f32,
+}
+
+impl PinkNoise {
+    fn new() -> Self {
+        PinkNoise {
+            white_noise: WhiteNoise::new(),
+            b0: 0.0,
+            b1: 0.0,
+            b2: 0.0,
+            b3: 0.0,
+            b4: 0.0,
+            b5: 0.0,
+            b6: 0.0,
+        }
+    }
+}
+
+impl Iterator for PinkNoise {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let white = self.white_noise.next()?;
+
+        self.b0 = 0.99886 * self.b0 + white * 0.0555179;
+        self.b1 = 0.99332 * self.b1 + white * 0.0750759;
+        self.b2 = 0.96900 * self.b2 + white * 0.1538520;
+        self.b3 = 0.86650 * self.b3 + white * 0.3104856;
+        self.b4 = 0.55000 * self.b4 + white * 0.5329522;
+        self.b5 = -0.7616 * self.b5 - white * 0.0168980;
+
+        let pink = self.b0 + self.b1 + self.b2 + self.b3 + self.b4 + self.b5 + self.b6 + white * 0.5362;
+        self.b6 = white * 0.115926;
+
+        Some(pink * 0.11) // Scale down to reasonable volume
+    }
+}
+
+impl Source for PinkNoise {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    fn sample_rate(&self) -> u32 {
+        48000
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 impl AudioState {
@@ -22,6 +137,8 @@ impl AudioState {
             sink: None,
             _stream: None,
             is_playing: false,
+            sound_type: SoundType::SineWave,
+            volume: 0.5, // Default to 50% volume
         }
     }
 
@@ -33,41 +150,70 @@ impl AudioState {
         Ok(())
     }
 
+    fn set_sound_type(&mut self, sound_type: SoundType) {
+        self.sound_type = sound_type;
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.volume = volume.clamp(0.0, 1.0);
+        if let Some(sink) = &self.sink {
+            sink.set_volume(self.volume);
+            println!("Volume set to {}%", (self.volume * 100.0) as i32);
+        }
+    }
+
     fn play(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.initialize_audio()?;
 
-        if let Some(sink) = &self.sink {
-            if sink.is_paused() {
-                sink.play();
-                self.is_playing = true;
-                println!("Resumed {}Hz tone", FREQUENCY_HZ as i32);
-                return Ok(());
-            }
+        // If already playing, do nothing
+        if self.is_playing {
+            return Ok(());
         }
 
         if let Some(stream) = &self._stream {
             let sink = Sink::connect_new(stream.mixer());
+            sink.set_volume(self.volume);
 
-            let source = SineWave::new(FREQUENCY_HZ)
-                .amplify(0.5)
-                .repeat_infinite();
+            match self.sound_type {
+                SoundType::SineWave => {
+                    let source = SineWave::new(FREQUENCY_HZ)
+                        .repeat_infinite();
+                    sink.append(source);
+                    println!("Started playing {}Hz tone at {}% volume", FREQUENCY_HZ as i32, (self.volume * 100.0) as i32);
+                }
+                SoundType::WhiteNoise => {
+                    let source = WhiteNoise::new()
+                        .amplify(0.3) // Base amplify for white noise to prevent it being too loud
+                        .repeat_infinite();
+                    sink.append(source);
+                    println!("Started playing white noise at {}% volume", (self.volume * 100.0) as i32);
+                }
+                SoundType::PinkNoise => {
+                    let source = PinkNoise::new()
+                        .repeat_infinite();
+                    sink.append(source);
+                    println!("Started playing pink noise at {}% volume", (self.volume * 100.0) as i32);
+                }
+            }
 
-            sink.append(source);
             sink.play();
-
             self.sink = Some(sink);
             self.is_playing = true;
-            println!("Started playing {}Hz tone", FREQUENCY_HZ as i32);
         }
 
         Ok(())
     }
 
     fn stop(&mut self) {
-        if let Some(sink) = &self.sink {
-            sink.pause();
+        if let Some(sink) = self.sink.take() {
+            sink.stop();
             self.is_playing = false;
-            println!("Stopped {}Hz tone", FREQUENCY_HZ as i32);
+            let name = match self.sound_type {
+                SoundType::SineWave => format!("{}Hz tone", FREQUENCY_HZ as i32),
+                SoundType::WhiteNoise => "white noise".to_string(),
+                SoundType::PinkNoise => "pink noise".to_string(),
+            };
+            println!("Stopped {}", name);
         }
     }
 }
@@ -138,13 +284,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio_state = Arc::new(Mutex::new(AudioState::new()));
 
     let menu = Menu::new();
-    let play_item = CheckMenuItem::new(&format!("Play {}Hz Tone", FREQUENCY_HZ as i32), true, false, None);
-    let stop_item = MenuItem::new("Stop", true, None);
+
+    // Create submenu for sound selection
+    let sound_menu = Submenu::new("Select Sound", true);
+    let sine_item = CheckMenuItem::new(&format!("{}Hz Tone", FREQUENCY_HZ as i32), true, true, None);
+    let white_noise_item = CheckMenuItem::new("White Noise", true, false, None);
+    let pink_noise_item = CheckMenuItem::new("Pink Noise", true, false, None);
+
+    sound_menu.append(&sine_item)?;
+    sound_menu.append(&white_noise_item)?;
+    sound_menu.append(&pink_noise_item)?;
+
+    // Create submenu for volume selection
+    let volume_menu = Submenu::new("Volume", true);
+    let vol_low_item = CheckMenuItem::new("Low (25%)", true, false, None);
+    let vol_medium_item = CheckMenuItem::new("Medium (50%)", true, true, None);
+    let vol_high_item = CheckMenuItem::new("High (75%)", true, false, None);
+    let vol_max_item = CheckMenuItem::new("Max (100%)", true, false, None);
+
+    volume_menu.append(&vol_low_item)?;
+    volume_menu.append(&vol_medium_item)?;
+    volume_menu.append(&vol_high_item)?;
+    volume_menu.append(&vol_max_item)?;
+
+    let play_item = MenuItem::new("Play", true, None);
+    let stop_item = MenuItem::new("Stop", false, None);
     let quit_item = MenuItem::new("Quit", true, None);
 
-    // Initially, disable "Stop" since we're not playing
-    stop_item.set_enabled(false);
-
+    menu.append(&sound_menu)?;
+    menu.append(&volume_menu)?;
     menu.append(&play_item)?;
     menu.append(&stop_item)?;
     menu.append(&quit_item)?;
@@ -154,12 +322,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Now it's safe to create the tray icon after NSApplication is initialized
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
-        .with_tooltip(&format!("Audio Player - {}Hz Tone", FREQUENCY_HZ as i32))
+        .with_tooltip("Audio Player - Select and play sounds")
         .with_icon(icon)
         .build()?;
 
     println!("Tray icon created. Look for it in your menu bar!");
-    println!("Use the menu to Play or Stop the {}Hz tone.", FREQUENCY_HZ as i32);
+    println!("Use the menu to select a sound and play it.");
 
     let menu_channel = MenuEvent::receiver();
 
@@ -195,26 +363,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(event) = menu_channel.try_recv() {
                 let event_id = event.id;
 
-                if event_id == play_item.id() {
+                if event_id == sine_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::SineWave);
+                    sine_item.set_checked(true);
+                    white_noise_item.set_checked(false);
+                    pink_noise_item.set_checked(false);
+                } else if event_id == white_noise_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::WhiteNoise);
+                    sine_item.set_checked(false);
+                    white_noise_item.set_checked(true);
+                    pink_noise_item.set_checked(false);
+                } else if event_id == pink_noise_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::PinkNoise);
+                    sine_item.set_checked(false);
+                    white_noise_item.set_checked(false);
+                    pink_noise_item.set_checked(true);
+                } else if event_id == vol_low_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(0.25);
+                    vol_low_item.set_checked(true);
+                    vol_medium_item.set_checked(false);
+                    vol_high_item.set_checked(false);
+                    vol_max_item.set_checked(false);
+                } else if event_id == vol_medium_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(0.5);
+                    vol_low_item.set_checked(false);
+                    vol_medium_item.set_checked(true);
+                    vol_high_item.set_checked(false);
+                    vol_max_item.set_checked(false);
+                } else if event_id == vol_high_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(0.75);
+                    vol_low_item.set_checked(false);
+                    vol_medium_item.set_checked(false);
+                    vol_high_item.set_checked(true);
+                    vol_max_item.set_checked(false);
+                } else if event_id == vol_max_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(1.0);
+                    vol_low_item.set_checked(false);
+                    vol_medium_item.set_checked(false);
+                    vol_high_item.set_checked(false);
+                    vol_max_item.set_checked(true);
+                } else if event_id == play_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     if let Err(e) = state.play() {
                         eprintln!("Error playing audio: {}", e);
                     } else {
-                        // Update menu items: disable Play, enable Stop, show checkmark
                         play_item.set_enabled(false);
-                        play_item.set_checked(true);
                         stop_item.set_enabled(true);
-                        // Change tray icon to green (playing)
+                        // Disable sound selection while playing
+                        sine_item.set_enabled(false);
+                        white_noise_item.set_enabled(false);
+                        pink_noise_item.set_enabled(false);
+                        // Disable volume adjustment while playing
+                        vol_low_item.set_enabled(false);
+                        vol_medium_item.set_enabled(false);
+                        vol_high_item.set_enabled(false);
+                        vol_max_item.set_enabled(false);
                         tray.set_icon(Some(create_playing_icon())).ok();
                     }
                 } else if event_id == stop_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.stop();
-                    // Update menu items: enable Play, disable Stop, remove checkmark
                     play_item.set_enabled(true);
-                    play_item.set_checked(false);
                     stop_item.set_enabled(false);
-                    // Change tray icon to blue (stopped)
+                    // Re-enable sound selection when stopped
+                    sine_item.set_enabled(true);
+                    white_noise_item.set_enabled(true);
+                    pink_noise_item.set_enabled(true);
+                    // Re-enable volume adjustment when stopped
+                    vol_low_item.set_enabled(true);
+                    vol_medium_item.set_enabled(true);
+                    vol_high_item.set_enabled(true);
+                    vol_max_item.set_enabled(true);
                     tray.set_icon(Some(create_stopped_icon())).ok();
                 } else if event_id == quit_item.id() {
                     println!("Quitting application...");
@@ -232,26 +458,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(event) = menu_channel.try_recv() {
                 let event_id = event.id;
 
-                if event_id == play_item.id() {
+                if event_id == sine_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::SineWave);
+                    sine_item.set_checked(true);
+                    white_noise_item.set_checked(false);
+                    pink_noise_item.set_checked(false);
+                } else if event_id == white_noise_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::WhiteNoise);
+                    sine_item.set_checked(false);
+                    white_noise_item.set_checked(true);
+                    pink_noise_item.set_checked(false);
+                } else if event_id == pink_noise_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::PinkNoise);
+                    sine_item.set_checked(false);
+                    white_noise_item.set_checked(false);
+                    pink_noise_item.set_checked(true);
+                } else if event_id == vol_low_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(0.25);
+                    vol_low_item.set_checked(true);
+                    vol_medium_item.set_checked(false);
+                    vol_high_item.set_checked(false);
+                    vol_max_item.set_checked(false);
+                } else if event_id == vol_medium_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(0.5);
+                    vol_low_item.set_checked(false);
+                    vol_medium_item.set_checked(true);
+                    vol_high_item.set_checked(false);
+                    vol_max_item.set_checked(false);
+                } else if event_id == vol_high_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(0.75);
+                    vol_low_item.set_checked(false);
+                    vol_medium_item.set_checked(false);
+                    vol_high_item.set_checked(true);
+                    vol_max_item.set_checked(false);
+                } else if event_id == vol_max_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_volume(1.0);
+                    vol_low_item.set_checked(false);
+                    vol_medium_item.set_checked(false);
+                    vol_high_item.set_checked(false);
+                    vol_max_item.set_checked(true);
+                } else if event_id == play_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     if let Err(e) = state.play() {
                         eprintln!("Error playing audio: {}", e);
                     } else {
-                        // Update menu items: disable Play, enable Stop, show checkmark
                         play_item.set_enabled(false);
-                        play_item.set_checked(true);
                         stop_item.set_enabled(true);
-                        // Change tray icon to green (playing)
+                        // Disable sound selection while playing
+                        sine_item.set_enabled(false);
+                        white_noise_item.set_enabled(false);
+                        pink_noise_item.set_enabled(false);
+                        // Disable volume adjustment while playing
+                        vol_low_item.set_enabled(false);
+                        vol_medium_item.set_enabled(false);
+                        vol_high_item.set_enabled(false);
+                        vol_max_item.set_enabled(false);
                         tray.set_icon(Some(create_playing_icon())).ok();
                     }
                 } else if event_id == stop_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.stop();
-                    // Update menu items: enable Play, disable Stop, remove checkmark
                     play_item.set_enabled(true);
-                    play_item.set_checked(false);
                     stop_item.set_enabled(false);
-                    // Change tray icon to blue (stopped)
+                    // Re-enable sound selection when stopped
+                    sine_item.set_enabled(true);
+                    white_noise_item.set_enabled(true);
+                    pink_noise_item.set_enabled(true);
+                    // Re-enable volume adjustment when stopped
+                    vol_low_item.set_enabled(true);
+                    vol_medium_item.set_enabled(true);
+                    vol_high_item.set_enabled(true);
+                    vol_max_item.set_enabled(true);
                     tray.set_icon(Some(create_stopped_icon())).ok();
                 } else if event_id == quit_item.id() {
                     println!("Quitting application...");

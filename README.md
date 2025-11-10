@@ -8,6 +8,7 @@ A macOS menu bar application that plays audio for relaxation and focus. Built wi
   - 40Hz sine wave tone
   - White noise
   - Pink noise
+  - Brown noise
 - **Volume Control**
   - Four preset levels: Low (25%), Medium (50%), High (75%), Max (100%)
   - Adjustable before playback
@@ -104,6 +105,7 @@ zip -r PlaySoundRust.zip PlaySoundRust.app
    - 40Hz Tone (sine wave)
    - White Noise
    - Pink Noise
+   - Brown Noise
 4. **Volume** - Choose your preferred volume level from the submenu:
    - Low (25%)
    - Medium (50%) - default
@@ -140,6 +142,13 @@ Random noise with more emphasis on lower frequencies (1/f noise). Compared to wh
 - Often preferred for sleep
 - Similar to the sound of rain or wind
 
+### Brown Noise
+Random noise with even stronger emphasis on low frequencies (1/f² noise). Also known as Brownian noise or red noise:
+- Deeper and more rumbling than pink noise
+- Sounds like a low roar or distant waterfall
+- Popular for deep focus and masking distractions
+- Some find it more soothing than white or pink noise
+
 ## Configuration
 
 To change the sine wave frequency, modify the `FREQUENCY_HZ` constant in `src/main.rs`:
@@ -157,6 +166,7 @@ The default volume levels can be adjusted by modifying the volume multipliers in
 **New Features:**
 - Added white noise generator
 - Added pink noise generator (using Paul Kellett's algorithm)
+- Added brown noise generator (Brownian noise)
 - Added volume control with 4 preset levels (25%, 50%, 75%, 100%)
 - Added sound selection submenu
 - Implemented UI locking during playback (prevents sound/volume changes while playing)
@@ -169,7 +179,8 @@ The default volume levels can be adjusted by modifying the volume multipliers in
 **Technical:**
 - Added `rand` dependency for noise generation
 - Implemented thread-safe RNG using `StdRng`
-- Custom white noise and pink noise source implementations
+- Custom white noise, pink noise, and brown noise source implementations
+- Brown noise uses random walk algorithm (integration of white noise)
 
 ## License
 

@@ -17,6 +17,7 @@ enum SoundType {
     SineWave,
     WhiteNoise,
     PinkNoise,
+    BrownNoise,
 }
 
 struct AudioState {
@@ -131,6 +132,55 @@ impl Source for PinkNoise {
     }
 }
 
+// Brown noise generator using random walk (integration of white noise)
+struct BrownNoise {
+    white_noise: WhiteNoise,
+    last_value: f32,
+}
+
+impl BrownNoise {
+    fn new() -> Self {
+        BrownNoise {
+            white_noise: WhiteNoise::new(),
+            last_value: 0.0,
+        }
+    }
+}
+
+impl Iterator for BrownNoise {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let white = self.white_noise.next()?;
+
+        // Add a small random step to the current value
+        self.last_value += white * 0.02;
+
+        // Clamp to prevent drift out of bounds
+        self.last_value = self.last_value.clamp(-1.0, 1.0);
+
+        Some(self.last_value)
+    }
+}
+
+impl Source for BrownNoise {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    fn sample_rate(&self) -> u32 {
+        48000
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
 impl AudioState {
     fn new() -> Self {
         AudioState {
@@ -194,6 +244,12 @@ impl AudioState {
                     sink.append(source);
                     println!("Started playing pink noise at {}% volume", (self.volume * 100.0) as i32);
                 }
+                SoundType::BrownNoise => {
+                    let source = BrownNoise::new()
+                        .repeat_infinite();
+                    sink.append(source);
+                    println!("Started playing brown noise at {}% volume", (self.volume * 100.0) as i32);
+                }
             }
 
             sink.play();
@@ -212,6 +268,7 @@ impl AudioState {
                 SoundType::SineWave => format!("{}Hz tone", FREQUENCY_HZ as i32),
                 SoundType::WhiteNoise => "white noise".to_string(),
                 SoundType::PinkNoise => "pink noise".to_string(),
+                SoundType::BrownNoise => "brown noise".to_string(),
             };
             println!("Stopped {}", name);
         }
@@ -290,10 +347,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sine_item = CheckMenuItem::new(&format!("{}Hz Tone", FREQUENCY_HZ as i32), true, true, None);
     let white_noise_item = CheckMenuItem::new("White Noise", true, false, None);
     let pink_noise_item = CheckMenuItem::new("Pink Noise", true, false, None);
+    let brown_noise_item = CheckMenuItem::new("Brown Noise", true, false, None);
 
     sound_menu.append(&sine_item)?;
     sound_menu.append(&white_noise_item)?;
     sound_menu.append(&pink_noise_item)?;
+    sound_menu.append(&brown_noise_item)?;
 
     // Create submenu for volume selection
     let volume_menu = Submenu::new("Volume", true);
@@ -369,18 +428,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     sine_item.set_checked(true);
                     white_noise_item.set_checked(false);
                     pink_noise_item.set_checked(false);
+                    brown_noise_item.set_checked(false);
                 } else if event_id == white_noise_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.set_sound_type(SoundType::WhiteNoise);
                     sine_item.set_checked(false);
                     white_noise_item.set_checked(true);
                     pink_noise_item.set_checked(false);
+                    brown_noise_item.set_checked(false);
                 } else if event_id == pink_noise_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.set_sound_type(SoundType::PinkNoise);
                     sine_item.set_checked(false);
                     white_noise_item.set_checked(false);
                     pink_noise_item.set_checked(true);
+                    brown_noise_item.set_checked(false);
+                } else if event_id == brown_noise_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::BrownNoise);
+                    sine_item.set_checked(false);
+                    white_noise_item.set_checked(false);
+                    pink_noise_item.set_checked(false);
+                    brown_noise_item.set_checked(true);
                 } else if event_id == vol_low_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.set_volume(0.25);
@@ -420,6 +489,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         sine_item.set_enabled(false);
                         white_noise_item.set_enabled(false);
                         pink_noise_item.set_enabled(false);
+                        brown_noise_item.set_enabled(false);
                         // Disable volume adjustment while playing
                         vol_low_item.set_enabled(false);
                         vol_medium_item.set_enabled(false);
@@ -436,6 +506,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     sine_item.set_enabled(true);
                     white_noise_item.set_enabled(true);
                     pink_noise_item.set_enabled(true);
+                    brown_noise_item.set_enabled(true);
                     // Re-enable volume adjustment when stopped
                     vol_low_item.set_enabled(true);
                     vol_medium_item.set_enabled(true);
@@ -464,18 +535,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     sine_item.set_checked(true);
                     white_noise_item.set_checked(false);
                     pink_noise_item.set_checked(false);
+                    brown_noise_item.set_checked(false);
                 } else if event_id == white_noise_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.set_sound_type(SoundType::WhiteNoise);
                     sine_item.set_checked(false);
                     white_noise_item.set_checked(true);
                     pink_noise_item.set_checked(false);
+                    brown_noise_item.set_checked(false);
                 } else if event_id == pink_noise_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.set_sound_type(SoundType::PinkNoise);
                     sine_item.set_checked(false);
                     white_noise_item.set_checked(false);
                     pink_noise_item.set_checked(true);
+                    brown_noise_item.set_checked(false);
+                } else if event_id == brown_noise_item.id() {
+                    let mut state = audio_state.lock().unwrap();
+                    state.set_sound_type(SoundType::BrownNoise);
+                    sine_item.set_checked(false);
+                    white_noise_item.set_checked(false);
+                    pink_noise_item.set_checked(false);
+                    brown_noise_item.set_checked(true);
                 } else if event_id == vol_low_item.id() {
                     let mut state = audio_state.lock().unwrap();
                     state.set_volume(0.25);
@@ -515,6 +596,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         sine_item.set_enabled(false);
                         white_noise_item.set_enabled(false);
                         pink_noise_item.set_enabled(false);
+                        brown_noise_item.set_enabled(false);
                         // Disable volume adjustment while playing
                         vol_low_item.set_enabled(false);
                         vol_medium_item.set_enabled(false);
@@ -531,6 +613,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     sine_item.set_enabled(true);
                     white_noise_item.set_enabled(true);
                     pink_noise_item.set_enabled(true);
+                    brown_noise_item.set_enabled(true);
                     // Re-enable volume adjustment when stopped
                     vol_low_item.set_enabled(true);
                     vol_medium_item.set_enabled(true);
